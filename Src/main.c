@@ -61,6 +61,7 @@ DMA_HandleTypeDef hdma_usart2_tx;
 static void * LSM6DSL_X_0_handle = NULL;
 uint8_t StatusFlag = 0;
 static uint8_t mems_event_detected        = 0;
+uint8_t DEBUG = 1;
 
 /* USER CODE END PV */
 
@@ -133,31 +134,29 @@ int main(void)
   /* USER CODE END WHILE */
 
   /* USER CODE BEGIN 3 */
-	  // HAL_Delay(1000);
-	  //HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
-	  // uint8_t buffer3[8] = "LED OFF\n";
-	  // HAL_UART_Transmit(&huart2, buffer3, sizeof(buffer3), HAL_MAX_DELAY);
-
-	  // HAL_Delay(1000);
-	  // uint8_t buffer2[7] = "LED ON\n";
-	  //HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
-	  // HAL_UART_Transmit(&huart2, buffer2, sizeof(buffer2), HAL_MAX_DELAY);
-	  if(StatusFlag == 1){
-		  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
-		  sprintf(LogMessages,"Eventos detectados: %d\n", mems_event_detected);
-		  HAL_UART_Transmit(&huart2,LogMessages, sizeof(LogMessages), HAL_MAX_DELAY);
-		  mems_event_detected = 0;
-		  HAL_Delay(1000);
-		  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
-		  StatusFlag &= 2;
-	  }else if( StatusFlag == 2){
-		  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
-		  sprintf(LogMessages,"Detectado\n");
-		  HAL_UART_Transmit(&huart2,LogMessages, sizeof(LogMessages), HAL_MAX_DELAY);
-		  HAL_Delay(100);
-		  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
-		  StatusFlag &= 1;
-
+	  switch(StatusFlag) {
+		  case 1 : {
+			  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+			  // Send via SPI the event
+			  if(DEBUG){
+				  sprintf(LogMessages,"Eventos detectados: %d\n", mems_event_detected);
+				  HAL_UART_Transmit(&huart2,LogMessages, sizeof(LogMessages), HAL_MAX_DELAY);
+			  }
+			  mems_event_detected = 0;
+			  HAL_Delay(1000);
+			  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+			  StatusFlag &= 2;
+			  break;
+		  }
+		  case 2 : {
+			  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+			  sprintf(LogMessages,"Detectado\n");
+			  HAL_UART_Transmit(&huart2,LogMessages, sizeof(LogMessages), HAL_MAX_DELAY);
+			  HAL_Delay(100);
+			  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+			  StatusFlag &= 1;
+			  break;
+		  }
 	  }
   }
   /* USER CODE END 3 */
@@ -401,7 +400,7 @@ void HAL_GPIO_EXTI_Callback( uint16_t GPIO_Pin )
   /* Free fall detection (available only for LSM6DSL sensor). */
   if ( GPIO_Pin == LSM6DSL_INT1_O_PIN )
   {
-	StatusFlag |= 2;
+	if(DEBUG) StatusFlag |= 2;
     mems_event_detected ++;
   }
 }
