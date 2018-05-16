@@ -42,6 +42,7 @@
 
 /* USER CODE BEGIN Includes */
 #include "string.h"
+#define BUFFERSIZE	(sizeof(aTxBuffer) - 1)
 /* USER CODE END Includes */
 
 /* Private variables ---------------------------------------------------------*/
@@ -56,9 +57,12 @@ UART_HandleTypeDef huart2;
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
 static void * LSM6DSL_X_0_handle = NULL;
-uint8_t StatusFlag = 1;
+uint8_t StatusFlag = 0;
 static uint8_t mems_event_detected        = 0;
-#define DEBUG_MODE
+/* Buffer used for transmission */
+uint8_t aTxBuffer[] = "****SPI - Two Boards communication based on Polling **** SPI Message ******** SPI Message ******** SPI Message ****";
+
+/* Buffer used for reception */
 
 /* USER CODE END PV */
 
@@ -74,6 +78,8 @@ static void MX_I2C1_Init(void);
 /* Private function prototypes -----------------------------------------------*/
 static void initializeAllSensors( void );
 static void enableAllSensors( void );
+static void TransmitAndCheckMsg(uint8_t *pTxData, uint16_t Size);
+static uint16_t Buffercmp(uint8_t* pBuffer1, uint8_t* pBuffer2, uint16_t BufferLength);
 /* USER CODE END PFP */
 
 /* USER CODE BEGIN 0 */
@@ -91,6 +97,8 @@ int main(void)
 	char LogMessages [256];
 	memset(LogMessages, 0, 256);
 	ACCELERO_Event_Status_t status;
+	HAL_StatusTypeDef errorcode;
+	int timer = 0;
   /* USER CODE END 1 */
 
   /* MCU Configuration----------------------------------------------------------*/
@@ -132,14 +140,20 @@ int main(void)
 
   /* USER CODE BEGIN 3 */
 	  switch(StatusFlag) {
+		  case 0 : {
+			  break;
+		  }
 		  case 1 : {
+			// Timed event, pass events to SPI
+            HAL_SPI_Transmit(&hspi1,mems_event_detected,sizeof(uint8_t),5000);
 			  // Send via SPI the event
-			HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"Number of events detected: %d\n",mems_event_detected),HAL_MAX_DELAY);
+			HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"It's time to send via SPI the number of events detected!: %d\n",mems_event_detected),HAL_MAX_DELAY);
 			mems_event_detected = 0;
 			StatusFlag &= ~1;
 			break;
 		  }
 		  case 2 : {
+			  // FreeFall detection mode
 			  if ( BSP_ACCELERO_Get_Event_Status_Ext( LSM6DSL_X_0_handle, &status ) == COMPONENT_OK ){
 				if ( status.FreeFallStatus != 0 ) {
 					mems_event_detected++;
@@ -149,11 +163,34 @@ int main(void)
 			  StatusFlag &= ~2;
 			  break;
 		  }
-		  case 0 : {
+
+		  case 3 : {
+			  // Debug button mode status
+			  HAL_Delay(500);
+			  switch(StatusFlag) {
+				  case 3 : {
+					  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"DEBUG[%d] Events: %d Timer: [%d,%d,%d]\n",3,mems_event_detected,htim1.Instance->CNT,htim1.Instance->PSC,htim1.Instance->ARR),HAL_MAX_DELAY);
+					  break;
+				  }
+				  case 6 : {
+					  (htim1.Instance->DMAR > 0) ? HAL_TIM_Base_Stop_IT(&htim1) : HAL_TIM_Base_Start_IT(&htim1);
+					  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"DEBUG[%d] Timer is %s\n",6,(htim1.Instance->DMAR > 0) ? "Started" : "Stopped"),HAL_MAX_DELAY);
+					  timer++;
+					  break;
+				  }
+				  case 9 : {
+					  errorcode = HAL_SPI_Transmit(&hspi1,mems_event_detected,sizeof(uint8_t),5000);
+					  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"DEBUG[%d] Sending events[%d] to SPI is %s\n",9,mems_event_detected,((errorcode > 0) ? "OK" : "ERROR")),HAL_MAX_DELAY);
+					  break;
+				  }
+			  }
+			  StatusFlag = 0;
 			  break;
 		  }
 		  default : {
+			  // Unknown mode status
 			  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"Error: FlagStatus Unknown\n"),HAL_MAX_DELAY);
+			  StatusFlag = 0;
 		  }
 	  }
   }
@@ -348,8 +385,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Alternate = GPIO_AF5_SPI2;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PB5 */
-  GPIO_InitStruct.Pin = GPIO_PIN_5;
+  /*Configure GPIO pins : PB4 PB5 */
+  GPIO_InitStruct.Pin = GPIO_PIN_4|GPIO_PIN_5;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
@@ -357,6 +394,9 @@ static void MX_GPIO_Init(void)
   /* EXTI interrupt init*/
   HAL_NVIC_SetPriority(EXTI9_5_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
+
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 
 }
 
@@ -390,6 +430,51 @@ static void enableAllSensors( void )
 	{
 		HAL_UART_Transmit(&huart2,"Error: LSM6DSL Enabling Free Fall Detection\n", 45,HAL_MAX_DELAY);
 	}
+}
+/**
+ * @brief  EXTI line detection callbacks
+ * @param  GPIO_Pin: Specifies the pins connected EXTI line
+ * @retval None
+ */
+void HAL_GPIO_EXTI_Callback( uint16_t GPIO_Pin )
+{
+
+  /* User button. */
+  if(GPIO_Pin == B1_Pin)
+  {
+    if ( BSP_PB_GetState( 0 ) == GPIO_PIN_RESET )
+    {
+      // Toggle enable/disable free-fall detection (available only for LSM6DSL sensor).
+    	StatusFlag += 3;
+    }
+  }
+
+  /* Free fall detection (available only for LSM6DSL sensor). */
+  else if ( GPIO_Pin == LSM6DSL_INT1_O_PIN )
+  {
+	  StatusFlag = 2;
+  }
+}
+/**
+  * @brief  Compares two buffers.
+  * @param  pBuffer1, pBuffer2: buffers to be compared.
+  * @param  BufferLength: buffer's length
+  * @retval 0  : pBuffer1 identical to pBuffer2
+  *         >0 : pBuffer1 differs from pBuffer2
+  */
+static uint16_t Buffercmp(uint8_t* pBuffer1, uint8_t* pBuffer2, uint16_t BufferLength)
+{
+  while (BufferLength--)
+  {
+    if((*pBuffer1) != *pBuffer2)
+    {
+      return BufferLength;
+    }
+    pBuffer1++;
+    pBuffer2++;
+  }
+
+  return 0;
 }
 /* USER CODE END 4 */
 
