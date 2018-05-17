@@ -67,9 +67,9 @@ uint8_t StatusFlag = 0;
 static uint8_t mems_event_detected        = 0;
 /* Mode of the system (Timed or Delta)
  * 0 : Timed - Send counted potholes every 30 seconds
- * 1 : Delta - Send pothole as soon as detected
+ * 1 : Burst - Send pothole as soon as detected
  */
-static uint8_t eventDelta = 0;
+static enum typesOfmodeTx {Timed,Burst} modeTx;
 /* I2C Address of Seeeduino */
 static uint8_t SlaveAddr = 4;
 
@@ -91,6 +91,7 @@ static void MX_I2C2_Init(void);
 /* Private function prototypes -----------------------------------------------*/
 static void initializeAllSensors( void );
 static void enableAllSensors( void );
+static void blinkLED(uint8_t counts);
 /* USER CODE END PFP */
 
 /* USER CODE BEGIN 0 */
@@ -134,12 +135,15 @@ int main(void)
   MX_I2C1_Init();
   MX_I2C2_Init();
   /* USER CODE BEGIN 2 */
-	#ifdef DEBUGMODE
+#ifdef DEBUGMODE
   	  // Print initial message
 	  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"Initializating board...\n"),HAL_MAX_DELAY);
-	#endif
+#endif
+
+  BSP_LED_Init( 0 );
   initializeAllSensors();
   enableAllSensors();
+
   HAL_TIM_Base_Start_IT(&htim1);
   /* USER CODE END 2 */
 
@@ -156,8 +160,9 @@ int main(void)
 			  break;
 		  }
 		  case 1 : {
+			if( modeTx == Timed) blinkLED(2);
 			// Send counted events via I2C
-			  errorcode = HAL_I2C_Master_Transmit(&hi2c2,SlaveAddr,mems_event_detected,1,HAL_MAX_DELAY);
+			errorcode = HAL_I2C_Master_Transmit(&hi2c2,SlaveAddr,mems_event_detected,1,HAL_MAX_DELAY);
 #ifdef DEBUGLORA
 			// Send via UART a formatted message for MVP
             if(mems_event_detected > 0){
@@ -169,27 +174,26 @@ int main(void)
             // Print debug message
 			HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"Send via I2C [%d] events is %s\n",mems_event_detected,((errorcode > 0) ? "OK" : "ERROR")),HAL_MAX_DELAY);
 #endif
+
 			mems_event_detected = 0;
-			StatusFlag &= ~1;
+			StatusFlag = 0;
 			break;
 		  }
 		  case 2 : {
+			  StatusFlag = 0;
 			  // FreeFall detection mode
 			  if ( BSP_ACCELERO_Get_Event_Status_Ext( LSM6DSL_X_0_handle, &status ) == COMPONENT_OK ){
-				if ( status.FreeFallStatus != 0 ) {
+				if ( status.FreeFallStatus != 0 ){
 					// Increment events detected
 					mems_event_detected++;
 #ifdef DEBUGMODE
 					HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"Detected event\n"),HAL_MAX_DELAY);
 #endif
-#ifdef DEBUGLORA
-					StatusFlag = 3;
-#endif
-				}
-				// If mode delta then send via I2C immediately (status = 0)
-				if(eventDelta) StatusFlag = 3;
+					// If mode delta then send via I2C immediately (status = 1)
+					if( modeTx == Burst) StatusFlag = 1;
+					blinkLED(1);
+				  }
 			  }
-			  StatusFlag &= ~2;
 			  break;
 		  }
 
@@ -201,14 +205,16 @@ int main(void)
 				  case 3 : {
 					  // Print general values (Events, timer and Registers)
 					  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"DEBUG[3] Events: %d Timer is %s: [%d,%d,%d]\n",mems_event_detected,(htim1.Instance->DMAR > 0) ? "Running" : "Stopped",htim1.Instance->CNT,htim1.Instance->PSC,htim1.Instance->ARR),HAL_MAX_DELAY);
+					  blinkLED(3);
 					  break;
 				  }
 				  case 6 : {
 					  // Change mode of the system (Timed or Delta)
 					  (htim1.Instance->DMAR > 0) ? HAL_TIM_Base_Stop_IT(&htim1) : HAL_TIM_Base_Start_IT(&htim1);
-					  eventDelta = !eventDelta;
+					  modeTx = !modeTx;
 					  // And print result
-					  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"DEBUG[6] STM32 is now in mode %s\n",((eventDelta > 0) ? "Delta" : "Timed")),HAL_MAX_DELAY);
+					  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"DEBUG[6] STM32 is now in mode %s\n",((modeTx > 0) ? "Burst" : "Timed")),HAL_MAX_DELAY);
+					  blinkLED(6);
 					  break;
 				  }
 				  case 9 : {
@@ -218,6 +224,7 @@ int main(void)
 					  // Send immediately via I2C the counted events and print Tx result
  					  errorcode = HAL_I2C_Master_Transmit(&hi2c2,SlaveAddr,mems_event_detected,1,HAL_MAX_DELAY);
 					  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"DEBUG[9] Sending events[%d] via I2C is %s\n",mems_event_detected,((errorcode > 0) ? "OK" : "ERROR")),HAL_MAX_DELAY);
+					  blinkLED(9);
 					  break;
 				  }
 			  }
@@ -227,7 +234,9 @@ int main(void)
 		  }
 		  default : {
 			  // Unknown mode status
+#ifdef DEBUGMODE
 			  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"Error: FlagStatus Unknown\n"),HAL_MAX_DELAY);
+#endif
 			  StatusFlag = 0;
 		  }
 	  }
@@ -468,6 +477,20 @@ static void enableAllSensors( void )
 #ifdef DEBUGMODE
 		HAL_UART_Transmit(&huart2,"Error: LSM6DSL Enabling Free Fall Detection\n", 45,HAL_MAX_DELAY);
 #endif
+	}
+}
+/**
+ * @brief  Blink LED X times
+ * @param  None
+ * @retval None
+ */
+static void blinkLED(uint8_t counts){
+	uint8_t counter;
+	for(counter = 0;counter < counts ; counter ++){
+		BSP_LED_On( 0 );
+		HAL_Delay(100);
+		BSP_LED_Off( 0 );
+		HAL_Delay(100);
 	}
 }
 /**
