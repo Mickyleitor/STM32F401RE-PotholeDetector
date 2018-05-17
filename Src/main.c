@@ -43,6 +43,8 @@
 /* USER CODE BEGIN Includes */
 #include "string.h"
 #define BUFFERSIZE	(sizeof(aTxBuffer) - 1)
+#define DEBUGMODE
+// #define DEBUGLORA
 /* USER CODE END Includes */
 
 /* Private variables ---------------------------------------------------------*/
@@ -59,11 +61,13 @@ UART_HandleTypeDef huart2;
 static void * LSM6DSL_X_0_handle = NULL;
 uint8_t StatusFlag = 0;
 static uint8_t mems_event_detected        = 0;
-/* Buffer used for transmission */
-uint8_t aTxBuffer[] = "****SPI - Two Boards communication based on Polling **** SPI Message ******** SPI Message ******** SPI Message ****";
-
-/* Buffer used for reception */
-
+/* Mode of the system (Timed or Delta) */
+static uint8_t modeSTM32 = 0;
+#ifdef DEBUGLORA
+	static float GPS_Lat = 41.894750F;
+	static float GPS_Lon = 12.502400F;
+#endif
+/* Buffer used for LoRa Payload */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -78,7 +82,6 @@ static void MX_I2C1_Init(void);
 /* Private function prototypes -----------------------------------------------*/
 static void initializeAllSensors( void );
 static void enableAllSensors( void );
-static void TransmitAndCheckMsg(uint8_t *pTxData, uint16_t Size);
 static uint16_t Buffercmp(uint8_t* pBuffer1, uint8_t* pBuffer2, uint16_t BufferLength);
 /* USER CODE END PFP */
 
@@ -98,7 +101,6 @@ int main(void)
 	memset(LogMessages, 0, 256);
 	ACCELERO_Event_Status_t status;
 	HAL_StatusTypeDef errorcode;
-	int timer = 0;
   /* USER CODE END 1 */
 
   /* MCU Configuration----------------------------------------------------------*/
@@ -124,8 +126,9 @@ int main(void)
   MX_SPI1_Init();
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
-  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"Initializating board...\n"),HAL_MAX_DELAY);
-
+	#ifdef DEBUGMODE
+	  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"Initializating board...\n"),HAL_MAX_DELAY);
+	#endif
   initializeAllSensors();
   enableAllSensors();
   HAL_TIM_Base_Start_IT(&htim1);
@@ -146,8 +149,15 @@ int main(void)
 		  case 1 : {
 			// Timed event, pass events to SPI
             HAL_SPI_Transmit(&hspi1,mems_event_detected,sizeof(uint8_t),5000);
-			  // Send via SPI the event
+#ifdef DEBUGLORA
+            if(mems_event_detected > 0){
+				sprintf(&LogMessages,"%f/%f/DDMMYY/HHMMSSCC\n",GPS_Lat,GPS_Lon);
+				HAL_UART_Transmit(&huart2,LogMessages, strlen(LogMessages) ,HAL_MAX_DELAY);
+            }
+#endif
+#ifdef DEBUGMODE
 			HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"It's time to send via SPI the number of events detected!: %d\n",mems_event_detected),HAL_MAX_DELAY);
+#endif
 			mems_event_detected = 0;
 			StatusFlag &= ~1;
 			break;
@@ -157,7 +167,15 @@ int main(void)
 			  if ( BSP_ACCELERO_Get_Event_Status_Ext( LSM6DSL_X_0_handle, &status ) == COMPONENT_OK ){
 				if ( status.FreeFallStatus != 0 ) {
 					mems_event_detected++;
+#ifdef DEBUGMODE
 					HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"Detected event\n"),HAL_MAX_DELAY);
+#endif
+#ifdef DEBUGLORA
+					StatusFlag = 3;
+#endif
+				}
+				if(modeSTM32){
+					StatusFlag = 3;
 				}
 			  }
 			  StatusFlag &= ~2;
@@ -169,18 +187,18 @@ int main(void)
 			  HAL_Delay(500);
 			  switch(StatusFlag) {
 				  case 3 : {
-					  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"DEBUG[%d] Events: %d Timer: [%d,%d,%d]\n",3,mems_event_detected,htim1.Instance->CNT,htim1.Instance->PSC,htim1.Instance->ARR),HAL_MAX_DELAY);
+					  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"DEBUG[3] Events: %d Timer is %s: [%d,%d,%d]\n",mems_event_detected,(htim1.Instance->DMAR > 0) ? "Running" : "Stopped",htim1.Instance->CNT,htim1.Instance->PSC,htim1.Instance->ARR),HAL_MAX_DELAY);
 					  break;
 				  }
 				  case 6 : {
 					  (htim1.Instance->DMAR > 0) ? HAL_TIM_Base_Stop_IT(&htim1) : HAL_TIM_Base_Start_IT(&htim1);
-					  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"DEBUG[%d] Timer is %s\n",6,(htim1.Instance->DMAR > 0) ? "Started" : "Stopped"),HAL_MAX_DELAY);
-					  timer++;
+					  modeSTM32 = !modeSTM32;
+					  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"DEBUG[6] STM32 is now in mode %s\n",((modeSTM32 > 0) ? "Delta" : "Timed")),HAL_MAX_DELAY);
 					  break;
 				  }
 				  case 9 : {
 					  errorcode = HAL_SPI_Transmit(&hspi1,mems_event_detected,sizeof(uint8_t),5000);
-					  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"DEBUG[%d] Sending events[%d] to SPI is %s\n",9,mems_event_detected,((errorcode > 0) ? "OK" : "ERROR")),HAL_MAX_DELAY);
+					  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"DEBUG[9] Sending events[%d] to SPI is %s\n",mems_event_detected,((errorcode > 0) ? "OK" : "ERROR")),HAL_MAX_DELAY);
 					  break;
 				  }
 			  }
@@ -288,7 +306,7 @@ static void MX_SPI1_Init(void)
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_256;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -412,7 +430,9 @@ static void initializeAllSensors( void )
   if(BSP_ACCELERO_Init( LSM6DSL_X_0, &LSM6DSL_X_0_handle ) == COMPONENT_ERROR)
   {
     /* LSM6DSL not detected, switch on LED2 and go to infinity loop */
+#ifdef DEBUGMODE
 	HAL_UART_Transmit(&huart2,"Error: LSM6DSL Initialization Error\n", 37,HAL_MAX_DELAY);
+#endif
     while (1)
     {}
   }
@@ -428,7 +448,9 @@ static void enableAllSensors( void )
 	BSP_ACCELERO_Sensor_Enable( LSM6DSL_X_0_handle );
 	if ( BSP_ACCELERO_Enable_Free_Fall_Detection_Ext( LSM6DSL_X_0_handle, INT1_PIN ) != COMPONENT_OK )
 	{
+#ifdef DEBUGMODE
 		HAL_UART_Transmit(&huart2,"Error: LSM6DSL Enabling Free Fall Detection\n", 45,HAL_MAX_DELAY);
+#endif
 	}
 }
 /**
