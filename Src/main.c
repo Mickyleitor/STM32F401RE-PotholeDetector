@@ -42,32 +42,41 @@
 
 /* USER CODE BEGIN Includes */
 #include "string.h"
-#define BUFFERSIZE	(sizeof(aTxBuffer) - 1)
-#define DEBUGMODE
+/* Uncomment this if session will be debugged via UART */
+// #define DEBUGMODE
+
+/* ONLY FOR MVP
+ * Uncomment this if LoRa Messages are displayed via UART
+*/
 // #define DEBUGLORA
+
 /* USER CODE END Includes */
 
 /* Private variables ---------------------------------------------------------*/
 I2C_HandleTypeDef hi2c1;
-
-SPI_HandleTypeDef hspi1;
-
+I2C_HandleTypeDef hi2c2;
 TIM_HandleTypeDef htim1;
-
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
 static void * LSM6DSL_X_0_handle = NULL;
+/* State of the System */
 uint8_t StatusFlag = 0;
+/* Number of potholes detected */
 static uint8_t mems_event_detected        = 0;
-/* Mode of the system (Timed or Delta) */
-static uint8_t modeSTM32 = 0;
+/* Mode of the system (Timed or Delta)
+ * 0 : Timed - Send counted potholes every 30 seconds
+ * 1 : Delta - Send pothole as soon as detected
+ */
+static uint8_t eventDelta = 0;
+/* I2C Address of Seeeduino */
+static uint8_t SlaveAddr = 4;
+
 #ifdef DEBUGLORA
 	static float GPS_Lat = 41.894750F;
 	static float GPS_Lon = 12.502400F;
 #endif
-/* Buffer used for LoRa Payload */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -75,14 +84,13 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM1_Init(void);
-static void MX_SPI1_Init(void);
 static void MX_I2C1_Init(void);
+static void MX_I2C2_Init(void);
 
 /* USER CODE BEGIN PFP */
 /* Private function prototypes -----------------------------------------------*/
 static void initializeAllSensors( void );
 static void enableAllSensors( void );
-static uint16_t Buffercmp(uint8_t* pBuffer1, uint8_t* pBuffer2, uint16_t BufferLength);
 /* USER CODE END PFP */
 
 /* USER CODE BEGIN 0 */
@@ -123,10 +131,11 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_TIM1_Init();
-  MX_SPI1_Init();
   MX_I2C1_Init();
+  MX_I2C2_Init();
   /* USER CODE BEGIN 2 */
 	#ifdef DEBUGMODE
+  	  // Print initial message
 	  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"Initializating board...\n"),HAL_MAX_DELAY);
 	#endif
   initializeAllSensors();
@@ -147,16 +156,18 @@ int main(void)
 			  break;
 		  }
 		  case 1 : {
-			// Timed event, pass events to SPI
-            HAL_SPI_Transmit(&hspi1,mems_event_detected,sizeof(uint8_t),5000);
+			// Send counted events via I2C
+			  errorcode = HAL_I2C_Master_Transmit(&hi2c2,SlaveAddr,mems_event_detected,1,HAL_MAX_DELAY);
 #ifdef DEBUGLORA
+			// Send via UART a formatted message for MVP
             if(mems_event_detected > 0){
 				sprintf(&LogMessages,"%f/%f/DDMMYY/HHMMSSCC\n",GPS_Lat,GPS_Lon);
 				HAL_UART_Transmit(&huart2,LogMessages, strlen(LogMessages) ,HAL_MAX_DELAY);
             }
 #endif
 #ifdef DEBUGMODE
-			HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"It's time to send via SPI the number of events detected!: %d\n",mems_event_detected),HAL_MAX_DELAY);
+            // Print debug message
+			HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"Send via I2C [%d] events is %s\n",mems_event_detected,((errorcode > 0) ? "OK" : "ERROR")),HAL_MAX_DELAY);
 #endif
 			mems_event_detected = 0;
 			StatusFlag &= ~1;
@@ -166,6 +177,7 @@ int main(void)
 			  // FreeFall detection mode
 			  if ( BSP_ACCELERO_Get_Event_Status_Ext( LSM6DSL_X_0_handle, &status ) == COMPONENT_OK ){
 				if ( status.FreeFallStatus != 0 ) {
+					// Increment events detected
 					mems_event_detected++;
 #ifdef DEBUGMODE
 					HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"Detected event\n"),HAL_MAX_DELAY);
@@ -174,34 +186,42 @@ int main(void)
 					StatusFlag = 3;
 #endif
 				}
-				if(modeSTM32){
-					StatusFlag = 3;
-				}
+				// If mode delta then send via I2C immediately (status = 0)
+				if(eventDelta) StatusFlag = 3;
 			  }
 			  StatusFlag &= ~2;
 			  break;
 		  }
 
 		  case 3 : {
-			  // Debug button mode status
+			  // Delay which allow press more times the debug button (and go to 3|6|9 StatusFlag mode) via ISR
 			  HAL_Delay(500);
+			  // Debug button mode status
 			  switch(StatusFlag) {
 				  case 3 : {
+					  // Print general values (Events, timer and Registers)
 					  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"DEBUG[3] Events: %d Timer is %s: [%d,%d,%d]\n",mems_event_detected,(htim1.Instance->DMAR > 0) ? "Running" : "Stopped",htim1.Instance->CNT,htim1.Instance->PSC,htim1.Instance->ARR),HAL_MAX_DELAY);
 					  break;
 				  }
 				  case 6 : {
+					  // Change mode of the system (Timed or Delta)
 					  (htim1.Instance->DMAR > 0) ? HAL_TIM_Base_Stop_IT(&htim1) : HAL_TIM_Base_Start_IT(&htim1);
-					  modeSTM32 = !modeSTM32;
-					  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"DEBUG[6] STM32 is now in mode %s\n",((modeSTM32 > 0) ? "Delta" : "Timed")),HAL_MAX_DELAY);
+					  eventDelta = !eventDelta;
+					  // And print result
+					  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"DEBUG[6] STM32 is now in mode %s\n",((eventDelta > 0) ? "Delta" : "Timed")),HAL_MAX_DELAY);
 					  break;
 				  }
 				  case 9 : {
-					  errorcode = HAL_SPI_Transmit(&hspi1,mems_event_detected,sizeof(uint8_t),5000);
-					  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"DEBUG[9] Sending events[%d] to SPI is %s\n",mems_event_detected,((errorcode > 0) ? "OK" : "ERROR")),HAL_MAX_DELAY);
+					  // Check if slave is ready and print Tx result
+					  errorcode = HAL_I2C_IsDeviceReady(&hi2c2,SlaveAddr,4,HAL_MAX_DELAY);
+					  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"DEBUG[9] Target device is %s\n",(errorcode > 0) ? "OK" : "ERROR"),HAL_MAX_DELAY);
+					  // Send immediately via I2C the counted events and print Tx result
+ 					  errorcode = HAL_I2C_Master_Transmit(&hi2c2,SlaveAddr,mems_event_detected,1,HAL_MAX_DELAY);
+					  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"DEBUG[9] Sending events[%d] via I2C is %s\n",mems_event_detected,((errorcode > 0) ? "OK" : "ERROR")),HAL_MAX_DELAY);
 					  break;
 				  }
 			  }
+			  // Reset Flag
 			  StatusFlag = 0;
 			  break;
 		  }
@@ -294,24 +314,20 @@ static void MX_I2C1_Init(void)
 
 }
 
-/* SPI1 init function */
-static void MX_SPI1_Init(void)
+/* I2C2 init function */
+static void MX_I2C2_Init(void)
 {
 
-  /* SPI1 parameter configuration*/
-  hspi1.Instance = SPI1;
-  hspi1.Init.Mode = SPI_MODE_MASTER;
-  hspi1.Init.Direction = SPI_DIRECTION_2LINES;
-  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
-  hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
-  hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
-  hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_256;
-  hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
-  hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
-  hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
-  hspi1.Init.CRCPolynomial = 10;
-  if (HAL_SPI_Init(&hspi1) != HAL_OK)
+  hi2c2.Instance = I2C2;
+  hi2c2.Init.ClockSpeed = 64000;
+  hi2c2.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c2.Init.OwnAddress1 = 0;
+  hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c2.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c2.Init.OwnAddress2 = 0;
+  hi2c2.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c2.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c2) != HAL_OK)
   {
     _Error_Handler(__FILE__, __LINE__);
   }
@@ -376,7 +392,6 @@ static void MX_USART2_UART_Init(void)
         * Output
         * EVENT_OUT
         * EXTI
-     PB10   ------> I2S2_CK
 */
 static void MX_GPIO_Init(void)
 {
@@ -389,19 +404,21 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+
   /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PB10 */
-  GPIO_InitStruct.Pin = GPIO_PIN_10;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  /*Configure GPIO pin : PA4 */
+  GPIO_InitStruct.Pin = GPIO_PIN_4;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF5_SPI2;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pins : PB4 PB5 */
   GPIO_InitStruct.Pin = GPIO_PIN_4|GPIO_PIN_5;
@@ -466,37 +483,16 @@ void HAL_GPIO_EXTI_Callback( uint16_t GPIO_Pin )
   {
     if ( BSP_PB_GetState( 0 ) == GPIO_PIN_RESET )
     {
-      // Toggle enable/disable free-fall detection (available only for LSM6DSL sensor).
+      // If debug button mode is UNPRESED then go to debug mode (3,6,9)
     	StatusFlag += 3;
     }
   }
 
-  /* Free fall detection (available only for LSM6DSL sensor). */
+  /* Free fall detection INterrupt PIN (available only for LSM6DSL sensor). */
   else if ( GPIO_Pin == LSM6DSL_INT1_O_PIN )
   {
 	  StatusFlag = 2;
   }
-}
-/**
-  * @brief  Compares two buffers.
-  * @param  pBuffer1, pBuffer2: buffers to be compared.
-  * @param  BufferLength: buffer's length
-  * @retval 0  : pBuffer1 identical to pBuffer2
-  *         >0 : pBuffer1 differs from pBuffer2
-  */
-static uint16_t Buffercmp(uint8_t* pBuffer1, uint8_t* pBuffer2, uint16_t BufferLength)
-{
-  while (BufferLength--)
-  {
-    if((*pBuffer1) != *pBuffer2)
-    {
-      return BufferLength;
-    }
-    pBuffer1++;
-    pBuffer2++;
-  }
-
-  return 0;
 }
 /* USER CODE END 4 */
 
