@@ -43,19 +43,17 @@
 /* USER CODE BEGIN Includes */
 #include "string.h"
 /* Uncomment this if session will be debugged via UART */
-// #define DEBUGMODE
+#define DEBUG_UART
 
-/* ONLY FOR MVP
- * Uncomment this if LoRa Messages are displayed via UART
-*/
-// #define DEBUGLORA
+#define MAX_BUFFER 256
 
 /* USER CODE END Includes */
 
 /* Private variables ---------------------------------------------------------*/
-I2C_HandleTypeDef hi2c1;
-I2C_HandleTypeDef hi2c2;
+I2C_HandleTypeDef hi2c3;
+
 TIM_HandleTypeDef htim1;
+
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
@@ -64,19 +62,17 @@ static void * LSM6DSL_X_0_handle = NULL;
 /* State of the System */
 uint8_t StatusFlag = 0;
 /* Number of potholes detected */
-static uint8_t mems_event_detected        = 0;
+static uint8_t mems_event_detected = 0;
 /* Mode of the system (Timed or Delta)
  * 0 : Timed - Send counted potholes every 30 seconds
  * 1 : Burst - Send pothole as soon as detected
  */
 static enum typesOfmodeTx {Timed,Burst} modeTx;
 /* I2C Address of Seeeduino */
-static uint8_t SlaveAddr = 4;
+uint16_t I2C_ADDRESS = 4;
+/* String message for printing stuff */
+char msg [MAX_BUFFER] = "";
 
-#ifdef DEBUGLORA
-	static float GPS_Lat = 41.894750F;
-	static float GPS_Lon = 12.502400F;
-#endif
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -84,18 +80,18 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM1_Init(void);
-static void MX_I2C1_Init(void);
-static void MX_I2C2_Init(void);
+static void MX_I2C3_Init(void);
 
 /* USER CODE BEGIN PFP */
 /* Private function prototypes -----------------------------------------------*/
 static void initializeAllSensors( void );
 static void enableAllSensors( void );
 static void blinkLED(uint8_t counts);
+static void i2c_scan( void );
+static void print_UART( void );
 /* USER CODE END PFP */
 
 /* USER CODE BEGIN 0 */
-
 /* USER CODE END 0 */
 
 /**
@@ -106,10 +102,9 @@ static void blinkLED(uint8_t counts);
 int main(void)
 {
   /* USER CODE BEGIN 1 */
-	char LogMessages [256];
-	memset(LogMessages, 0, 256);
+	memset(msg, 0, MAX_BUFFER);
 	ACCELERO_Event_Status_t status;
-	HAL_StatusTypeDef errorcode;
+	HAL_StatusTypeDef errorcode = HAL_ERROR;
   /* USER CODE END 1 */
 
   /* MCU Configuration----------------------------------------------------------*/
@@ -130,20 +125,20 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+#ifdef DEBUG_UART
   MX_USART2_UART_Init();
-  MX_TIM1_Init();
-  MX_I2C1_Init();
-  MX_I2C2_Init();
-  /* USER CODE BEGIN 2 */
-#ifdef DEBUGMODE
-  	  // Print initial message
-	  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"Initializating board...\n"),HAL_MAX_DELAY);
 #endif
+  MX_TIM1_Init();
+  MX_I2C3_Init();
+  /* USER CODE BEGIN 2 */
+
+  sprintf(msg,"Initializating board...\n");
+  print_UART();
 
   BSP_LED_Init( 0 );
   initializeAllSensors();
   enableAllSensors();
-
+  i2c_scan();
   HAL_TIM_Base_Start_IT(&htim1);
   /* USER CODE END 2 */
 
@@ -160,21 +155,12 @@ int main(void)
 			  break;
 		  }
 		  case 1 : {
-			if( modeTx == Timed) blinkLED(2);
-			// Send counted events via I2C
-			errorcode = HAL_I2C_Master_Transmit(&hi2c2,SlaveAddr,mems_event_detected,1,HAL_MAX_DELAY);
-#ifdef DEBUGLORA
-			// Send via UART a formatted message for MVP
-            if(mems_event_detected > 0){
-				sprintf(&LogMessages,"%f/%f/DDMMYY/HHMMSSCC\n",GPS_Lat,GPS_Lon);
-				HAL_UART_Transmit(&huart2,LogMessages, strlen(LogMessages) ,HAL_MAX_DELAY);
-            }
-#endif
-#ifdef DEBUGMODE
-            // Print debug message
-			HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"Send via I2C [%d] events is %s\n",mems_event_detected,((errorcode > 0) ? "OK" : "ERROR")),HAL_MAX_DELAY);
-#endif
-
+			if(mems_event_detected){
+				// Send counted events via I2C
+				errorcode = HAL_I2C_Master_Transmit(&hi2c3,I2C_ADDRESS,&mems_event_detected,sizeof(mems_event_detected),HAL_MAX_DELAY);
+				sprintf(msg,"Send via I2C [%d] events is %s\n",mems_event_detected,((errorcode == HAL_OK) ? "OK" : "ERROR"));
+				print_UART();
+			}
 			mems_event_detected = 0;
 			StatusFlag = 0;
 			break;
@@ -186,12 +172,11 @@ int main(void)
 				if ( status.FreeFallStatus != 0 ){
 					// Increment events detected
 					mems_event_detected++;
-#ifdef DEBUGMODE
-					HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"Detected event\n"),HAL_MAX_DELAY);
-#endif
+
+					sprintf(msg,"Detected event\n");
+					print_UART();
 					// If mode delta then send via I2C immediately (status = 1)
 					if( modeTx == Burst) StatusFlag = 1;
-					blinkLED(1);
 				  }
 			  }
 			  break;
@@ -204,8 +189,8 @@ int main(void)
 			  switch(StatusFlag) {
 				  case 3 : {
 					  // Print general values (Events, timer and Registers)
-					  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"DEBUG[3] Events: %d Timer is %s: [%d,%d,%d]\n",mems_event_detected,(htim1.Instance->DMAR > 0) ? "Running" : "Stopped",htim1.Instance->CNT,htim1.Instance->PSC,htim1.Instance->ARR),HAL_MAX_DELAY);
-					  blinkLED(3);
+					  sprintf(msg,"DEBUG[3] Events: %d Timer is %s: [%lu,%lu,%lu]\n",mems_event_detected,(htim1.Instance->DMAR > 0) ? "Running" : "Stopped",htim1.Instance->CNT,htim1.Instance->PSC,htim1.Instance->ARR);
+					  print_UART();
 					  break;
 				  }
 				  case 6 : {
@@ -213,18 +198,13 @@ int main(void)
 					  (htim1.Instance->DMAR > 0) ? HAL_TIM_Base_Stop_IT(&htim1) : HAL_TIM_Base_Start_IT(&htim1);
 					  modeTx = !modeTx;
 					  // And print result
-					  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"DEBUG[6] STM32 is now in mode %s\n",((modeTx > 0) ? "Burst" : "Timed")),HAL_MAX_DELAY);
+					  sprintf(msg,"DEBUG[6] STM32 is now in mode %s\n",((modeTx > 0) ? "Burst" : "Timed"));
+					  print_UART();
 					  blinkLED(6);
 					  break;
 				  }
 				  case 9 : {
-					  // Check if slave is ready and print Tx result
-					  errorcode = HAL_I2C_IsDeviceReady(&hi2c2,SlaveAddr,4,HAL_MAX_DELAY);
-					  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"DEBUG[9] Target device is %s\n",(errorcode > 0) ? "OK" : "ERROR"),HAL_MAX_DELAY);
-					  // Send immediately via I2C the counted events and print Tx result
- 					  errorcode = HAL_I2C_Master_Transmit(&hi2c2,SlaveAddr,mems_event_detected,1,HAL_MAX_DELAY);
-					  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"DEBUG[9] Sending events[%d] via I2C is %s\n",mems_event_detected,((errorcode > 0) ? "OK" : "ERROR")),HAL_MAX_DELAY);
-					  blinkLED(9);
+					  i2c_scan();
 					  break;
 				  }
 			  }
@@ -234,9 +214,8 @@ int main(void)
 		  }
 		  default : {
 			  // Unknown mode status
-#ifdef DEBUGMODE
-			  HAL_UART_Transmit(&huart2,LogMessages, sprintf(LogMessages,"Error: FlagStatus Unknown\n"),HAL_MAX_DELAY);
-#endif
+			  sprintf(msg,"Error: FlagStatus Unknown\n");
+			  print_UART();
 			  StatusFlag = 0;
 		  }
 	  }
@@ -303,40 +282,20 @@ void SystemClock_Config(void)
   HAL_NVIC_SetPriority(SysTick_IRQn, 0, 0);
 }
 
-/* I2C1 init function */
-static void MX_I2C1_Init(void)
+/* I2C3 init function */
+static void MX_I2C3_Init(void)
 {
 
-  hi2c1.Instance = I2C1;
-  hi2c1.Init.ClockSpeed = 100000;
-  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
-  hi2c1.Init.OwnAddress1 = 0;
-  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
-  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
-  hi2c1.Init.OwnAddress2 = 0;
-  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
-  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
-  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
-  {
-    _Error_Handler(__FILE__, __LINE__);
-  }
-
-}
-
-/* I2C2 init function */
-static void MX_I2C2_Init(void)
-{
-
-  hi2c2.Instance = I2C2;
-  hi2c2.Init.ClockSpeed = 64000;
-  hi2c2.Init.DutyCycle = I2C_DUTYCYCLE_2;
-  hi2c2.Init.OwnAddress1 = 0;
-  hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
-  hi2c2.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
-  hi2c2.Init.OwnAddress2 = 0;
-  hi2c2.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
-  hi2c2.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
-  if (HAL_I2C_Init(&hi2c2) != HAL_OK)
+  hi2c3.Instance = I2C3;
+  hi2c3.Init.ClockSpeed = 400000;
+  hi2c3.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c3.Init.OwnAddress1 = 0;
+  hi2c3.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c3.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c3.Init.OwnAddress2 = 0;
+  hi2c3.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c3.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c3) != HAL_OK)
   {
     _Error_Handler(__FILE__, __LINE__);
   }
@@ -381,7 +340,7 @@ static void MX_USART2_UART_Init(void)
 {
 
   huart2.Instance = USART2;
-  huart2.Init.BaudRate = 115200;
+  huart2.Init.BaudRate = 9600;
   huart2.Init.WordLength = UART_WORDLENGTH_8B;
   huart2.Init.StopBits = UART_STOPBITS_1;
   huart2.Init.Parity = UART_PARITY_NONE;
@@ -401,6 +360,7 @@ static void MX_USART2_UART_Init(void)
         * Output
         * EVENT_OUT
         * EXTI
+     PB3   ------> I2C2_SDA
 */
 static void MX_GPIO_Init(void)
 {
@@ -429,6 +389,14 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : PB3 */
+  GPIO_InitStruct.Pin = GPIO_PIN_3;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  GPIO_InitStruct.Alternate = GPIO_AF9_I2C2;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
   /*Configure GPIO pins : PB4 PB5 */
   GPIO_InitStruct.Pin = GPIO_PIN_4|GPIO_PIN_5;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
@@ -456,11 +424,9 @@ static void initializeAllSensors( void )
   if(BSP_ACCELERO_Init( LSM6DSL_X_0, &LSM6DSL_X_0_handle ) == COMPONENT_ERROR)
   {
     /* LSM6DSL not detected, switch on LED2 and go to infinity loop */
-#ifdef DEBUGMODE
-	HAL_UART_Transmit(&huart2,"Error: LSM6DSL Initialization Error\n", 37,HAL_MAX_DELAY);
-#endif
-    while (1)
-    {}
+	 sprintf(msg,"Error: LSM6DSL Initialization Error\n");
+     print_UART();
+	_Error_Handler(__FILE__, __LINE__);
   }
 }
 
@@ -474,9 +440,9 @@ static void enableAllSensors( void )
 	BSP_ACCELERO_Sensor_Enable( LSM6DSL_X_0_handle );
 	if ( BSP_ACCELERO_Enable_Free_Fall_Detection_Ext( LSM6DSL_X_0_handle, INT1_PIN ) != COMPONENT_OK )
 	{
-#ifdef DEBUGMODE
-		HAL_UART_Transmit(&huart2,"Error: LSM6DSL Enabling Free Fall Detection\n", 45,HAL_MAX_DELAY);
-#endif
+		sprintf(msg,"Error: LSM6DSL Enabling Free Fall Detection\n");
+	     print_UART();
+		_Error_Handler(__FILE__, __LINE__);
 	}
 }
 /**
@@ -517,6 +483,28 @@ void HAL_GPIO_EXTI_Callback( uint16_t GPIO_Pin )
 	  StatusFlag = 2;
   }
 }
+static void i2c_scan( void )
+{
+	sprintf(msg,"Scanning I2C devices\n");
+    print_UART();
+	for(uint16_t i=1;i<128;i++)
+	{
+		if(HAL_I2C_IsDeviceReady(&hi2c3,i<<1,1,2)==HAL_OK)
+		{
+			sprintf(msg,"Device %d ready\n",i);
+		    print_UART();
+			I2C_ADDRESS = i<<1;
+		}
+		HAL_Delay(1);
+	}
+	sprintf(msg,"Scan finished\n");
+    print_UART();
+}
+static void print_UART( void ){
+#ifdef DEBUG_UART
+	HAL_UART_Transmit(&huart2,(uint8_t*)msg,strlen(msg),HAL_MAX_DELAY);
+#endif
+}
 /* USER CODE END 4 */
 
 /**
@@ -529,8 +517,14 @@ void _Error_Handler(char *file, int line)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
+  sprintf(msg,"Error file %s at line %d\n",file,line);
+  print_UART();
   while(1)
   {
+		BSP_LED_On( 0 );
+		HAL_Delay(100);
+		BSP_LED_Off( 0 );
+		HAL_Delay(100);
   }
   /* USER CODE END Error_Handler_Debug */
 }
