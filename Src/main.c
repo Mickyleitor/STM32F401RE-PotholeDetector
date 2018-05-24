@@ -113,7 +113,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
+  BSP_LED_Init( 0 );
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -125,20 +125,16 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-#ifdef DEBUG_UART
   MX_USART2_UART_Init();
-#endif
   MX_TIM1_Init();
   MX_I2C3_Init();
   /* USER CODE BEGIN 2 */
-
   sprintf(msg,"Initializating board...\n");
   print_UART();
-
-  BSP_LED_Init( 0 );
   initializeAllSensors();
   enableAllSensors();
   i2c_scan();
+
   HAL_TIM_Base_Start_IT(&htim1);
   /* USER CODE END 2 */
 
@@ -189,7 +185,7 @@ int main(void)
 			  switch(StatusFlag) {
 				  case 3 : {
 					  // Print general values (Events, timer and Registers)
-					  sprintf(msg,"DEBUG[3] Events: %d Timer is %s: [%lu,%lu,%lu]\n",mems_event_detected,(htim1.Instance->DMAR > 0) ? "Running" : "Stopped",htim1.Instance->CNT,htim1.Instance->PSC,htim1.Instance->ARR);
+					  sprintf(msg,"Events: %d Timer is %s: [%lu,%lu,%lu]\n",mems_event_detected,(htim1.Instance->DMAR > 0) ? "Running" : "Stopped",htim1.Instance->CNT,htim1.Instance->PSC,htim1.Instance->ARR);
 					  print_UART();
 					  break;
 				  }
@@ -198,9 +194,10 @@ int main(void)
 					  (htim1.Instance->DMAR > 0) ? HAL_TIM_Base_Stop_IT(&htim1) : HAL_TIM_Base_Start_IT(&htim1);
 					  modeTx = !modeTx;
 					  // And print result
-					  sprintf(msg,"DEBUG[6] STM32 is now in mode %s\n",((modeTx > 0) ? "Burst" : "Timed"));
+					  sprintf(msg,"STM32 is now in mode %s\n",((modeTx > 0) ? "Burst" : "Timed"));
 					  print_UART();
-					  blinkLED(6);
+					  // Blink 6 times if Burst mode or 3 times if Timed mode
+					  blinkLED(((modeTx > 0) ? 6 : 3));
 					  break;
 				  }
 				  case 9 : {
