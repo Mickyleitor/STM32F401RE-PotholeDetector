@@ -43,7 +43,7 @@
 /* USER CODE BEGIN Includes */
 #include "string.h"
 /* Uncomment this if session will be debugged via UART */
-#define DEBUG_UART
+// #define DEBUG_UART
 
 #define MAX_BUFFER 256
 
