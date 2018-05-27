@@ -13,8 +13,8 @@ This project was done using a generated code by System Workbench toolchain distr
 ### 1. First you need to make the board connections:
 
 <center>
-  
-![Board Connections](https://raw.githubusercontent.com/Mickyleitor/STM32F401RE-PotholeDetector/master/Docs/Board-connections.png)
+
+<img src="https://raw.githubusercontent.com/Mickyleitor/STM32F401RE-PotholeDetector/master/Docs/Board-connections.png" width="256">
 
 | STM32F401RE (X-NUCLEO-IKS01A2)  | Seeeduino LoRaWAN w/ GPS |
 |             :---:               |          :---:           |
