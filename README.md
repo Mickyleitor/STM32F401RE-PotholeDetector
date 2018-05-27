@@ -5,16 +5,14 @@ This repository contains all information regarding the code of STM32F401RE for t
 This board is part of a bigger system, it will be connected to other board via I2C and it will send data through LoRa.
 The code send via I2C the events detected from LSM6DSL (x-nucleo-iks01a2) accelerometer.
 
- (This project was generated using System Workbench 4)
-
 ## Instrucctions
 This project was done using a generated code by System Workbench toolchain distributed by STMicroelectronics, you can download the pack [here](http://www.st.com/en/development-tools/sw4stm32.html) as well as eclipse IDE.
 
 ### 1. First you need to make the board connections:
 
 <center>
-  
-![Board Connections](https://raw.githubusercontent.com/Mickyleitor/STM32F401RE-PotholeDetector/master/Docs/Board-connections.png)
+
+<img src="https://raw.githubusercontent.com/Mickyleitor/STM32F401RE-PotholeDetector/master/Docs/Board-connections.png" width="256">
 
 | STM32F401RE (X-NUCLEO-IKS01A2)  | Seeeduino LoRaWAN w/ GPS |
 |             :---:               |          :---:           |
@@ -42,9 +40,12 @@ You can see basic information of what's happening inside the board.
 |               2                 |    Switch between Burst/Timed mode    |
 |               3                 |  Test I2C connection and send events  |
 
-### 4. Modes Burst / Timed
+### 4. Burst / Timed Modes
 * Timed mode means every detected events is stored until a timer interrupts. If Timer interrupts it's sent via I2C to Seeeduino. 
 * In Burst mode there is no need to wait for the Timer IT so every detected events will be sent instantly to Seeeduino via I2C.
+
+### 5. DEBUG Mode
+You can view all basic information like detected potholes and low-level processes by uncommenting the DEBUG_MODE define in [main.c](https://github.com/Mickyleitor/STM32F401RE-PotholeDetector/blob/master/Src/main.c) file and openning a SERIAL/USART terminal monitor.
 
 ## Finite State Machine Diagram
 ![Finite State Machine Diagram](https://raw.githubusercontent.com/Mickyleitor/STM32F401RE-PotholeDetector/master/Docs/State-machine.png)
