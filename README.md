@@ -67,7 +67,7 @@ Libraries used:
 - BSP. For X_NUCLEO_IKS01A2 accelerometer (x_nucleo_iks01a2_accelero).
 
 ## Workflow and methods
-1. Peripherals is configured to:
+1. Peripherals is configured to do:
  - Timer0 interrupt every 30 second via [MX_TIM1_Init](https://github.com/Mickyleitor/STM32F401RE-PotholeDetector/blob/master/Src/main.c#L303) function. When it's triggered go to StatusFlag 1.
  - USART2, I2C3 is configured via [MX_USART2_UART_Init](https://github.com/Mickyleitor/STM32F401RE-PotholeDetector/blob/master/Src/main.c#L336) and [MX_I2C3_Init](https://github.com/Mickyleitor/STM32F401RE-PotholeDetector/blob/master/Src/main.c#L283). 
  - [GPIO External interrupt](https://github.com/Mickyleitor/STM32F401RE-PotholeDetector/blob/master/Src/main.c#L362) for GPIOC Pin 13 (built in button) and GPIOB Pin 4 (LSM6DSL INT2). Both done with BSP libraries. 
