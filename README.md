@@ -2,8 +2,10 @@
 
 This repository contains all information regarding the code of STM32F401RE for the Pothole Detector project.
 
-This board is part of a bigger system, it will be connected to other board via I2C and it will send data through LoRa.
-The code send via I2C the events detected from LSM6DSL (x-nucleo-iks01a2) accelerometer.
+This board is part of a [bigger](https://github.com/onaralili/pothole-detector-project) system, it will be connected to other board via I2C and it will send data through LoRa.
+The code sends via I2C the events detected from LSM6DSL (x-nucleo-iks01a2) accelerometer.
+
+Complete project can be visited [here](https://github.com/onaralili/pothole-detector-project)
 
 ## Instrucctions
 This project was done using a generated code by System Workbench toolchain distributed by STMicroelectronics, you can download the pack [here](http://www.st.com/en/development-tools/sw4stm32.html) as well as eclipse IDE.
