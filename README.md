@@ -12,8 +12,7 @@ This project was done using a generated code by System Workbench toolchain distr
 
 ### 1. First you need to make the board connections:
 
-<center>
-
+<p align="center">
 <img src="https://raw.githubusercontent.com/Mickyleitor/STM32F401RE-PotholeDetector/master/Docs/Board-connections.png" width="692">
 
 | STM32F401RE (X-NUCLEO-IKS01A2)  | Seeeduino LoRaWAN w/ GPS |
@@ -22,8 +21,7 @@ This project was done using a generated code by System Workbench toolchain distr
 |         PC9 (I2C3 SDA)          |         PC4 (SDA)        |
 |              +5V                |           +5V            |
 |              GND                |           GND            |
-  
-</center>
+</p>
 
 ### 2. Upload the code inside the board
 * The code contains all libraries used by peripherical modules but make sure you all have a working environment.
@@ -57,7 +55,9 @@ You can see basic information of what's happening inside the board.
 You can view all basic information like detected potholes and low-level processes by uncommenting the DEBUG_MODE define in [main.c](https://github.com/Mickyleitor/STM32F401RE-PotholeDetector/blob/master/Src/main.c) file and openning a SERIAL/USART terminal monitor.
 
 ## Finite State Machine Diagram
-![Finite State Machine Diagram](https://raw.githubusercontent.com/Mickyleitor/STM32F401RE-PotholeDetector/master/Docs/State-machine.png)
+<p align="center">
+<img src="https://raw.githubusercontent.com/Mickyleitor/STM32F401RE-PotholeDetector/master/Docs/State-machine.png" width="692">
+</p>
 
 STM32F401RE is configured to have several interrupts. 
 - Timer ISR. It's used by Timed mode so everytime it interrupts, the stored events detected is sent via I2C if it's non-zero.
